@@ -1,86 +1,281 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  createContext,
+  useContext,
+} from "react";
+import axios from "axios";
 import Wavbar from "@/components/WAVbar/wavbar";
+import SentenceCarousel from "@/components/SentenceCarousel/page";
+import SpeakerDropdown from "@/components/SpeakerDropdown/page";
+import {
+  SpeakerConstant,
+  JSpeakerConstant,
+  CSpeakerConstant,
+} from "@/Constants/SpeakerConstant";
+import SentenceCarouselLoaded from "@/components/SentenceCarousel/Loaded/page";
+import useLocalStorage from "@/CustomHook/localstorage";
 
 export default function Page({ params }: { params: { storyName: string } }) {
-  const [storyContent, setStoryContent] = useState<Array<string | { sentence: string; sentenceId: number; emotion: string; }>>([]);
+  const [loaded, setLoaded] = useState(false);
+  //--------------------- 取得故事資訊, init故事參數
+  const [storyLength, setStoryLength] = useState<number>(0);
+  const [storyName, setStoryName] = useState("");
+  const [storyLang, setStoryLang] = useState("J");
+
+  const [localStoryContent, setLocalStoryContent] = useLocalStorage(
+    params.storyName,
+    ""
+  );
+  const [storyContent, setStoryContent] = useState([
+    {
+      sentence: "",
+      sentenceId: 0,
+      emotion: "",
+    },
+  ]);
+  const [sentenceEmotion, setSentenceEmotion] = useState("");
+  const [speaker, setSpeaker] = useState("預設女聲");
+  const [speakerList, setSpeakerList] = useState<string[]>([]);
+
+  // 狀態用於監聽播放狀態
+  const [isPlaying, setIsPlaying] = useState(false);
+  // 狀態用於情緒狀態
+  const [isEmoMode, setIsEmoMode] = useState(true);
+  // 狀態用於音訊進度
+  const [audioProgress, setaudioProgress] = useState<number>(0);
+  // 狀態用於音訊來源
+  const [audioSrc, setAudioSrc] = useState("");
+
+  const buildAudioSrc = (
+    L: string,
+    S: string,
+    E: string,
+    P: number,
+    isEmoMode: boolean
+  ) => {
+    if (storyLength + 1 < P) {
+      setaudioProgress(storyLength + 1);
+      P = storyLength + 1;
+    } else if (P < 1) {
+      setaudioProgress(0);
+      P = 1;
+    }
+
+    E = isEmoMode ? E : L == "J" ? "434" : "6234";
+
+    return `https://storytell-backend.fcuvoice.com/wav/${params.storyName}/${S}/${E}/${P}.wav`;
+  };
+
+  const url =
+    "https://storytell-backend.fcuvoice.com/api/story/getStoryDetail/" +
+    params.storyName;
+
+  const fetchData = async () => {
+    try {
+      const response = await axios.get(url);
+      setLoaded(true);
+      const storyData = response.data;
+
+      setStoryName(storyData.storyName);
+      setStoryLang(storyData.storyLang);
+
+      if (storyData.storyLang === "J") {
+        setSpeakerList(JSpeakerConstant);
+      } else {
+        setSpeakerList(CSpeakerConstant);
+      }
+
+      // 如果曾經有過更改故事設定
+      const storyContent =
+        localStoryContent == ""
+          ? storyData.storyContent
+          : JSON.parse(localStoryContent);
+      setStoryContent(storyContent);
+
+      const sentenceEmotion = storyContent[0].emotion;
+      storyContent.length > 1
+        ? setSentenceEmotion(storyContent[1].emotion)
+        : setSentenceEmotion(sentenceEmotion);
+      setStoryLength(storyContent.length);
+
+      // init的音訊
+      setAudioSrc(
+        buildAudioSrc(
+          storyData.storyLang,
+          SpeakerConstant["預設女聲"],
+          sentenceEmotion,
+          1,
+          true
+        )
+      );
+    } catch (error) {
+      console.error("Error fetching story details:", error);
+    }
+  };
 
   useEffect(() => {
-    const getAllStoryInfo = 'http://140.134.37.23:8000/api/story/getAllStoryInfo';
-
-    fetch(getAllStoryInfo)
-      .then(response => response.json())
-      .then((data: { _id: string }[]) => {
-        const storyIds = data.map(story => story._id);
-        fetchStoryDetails(storyIds);
-      })
-      .catch(error => {
-        console.error('發生錯誤：', error);
-      });
+    fetchData();
   }, []);
 
-  function fetchStoryDetails(storyIds: string[]) {
-    const storyDetailBaseUrl = 'http://140.134.37.23:8000/api/story/getStoryDetail/';
+  //--------------------- 播放進度
 
-    storyIds.forEach(storyId => {
-      const storyDetailUrl = storyDetailBaseUrl + storyId;
-
-      fetch(storyDetailUrl)
-        .then(response => response.json())
-        .then((storyData: { storyContent: string[] }) => {
-          const storyContent = storyData.storyContent;
-
-          setStoryContent(prevStoryContent => [...prevStoryContent, ...storyContent]);
-        })
-        .catch(error => {
-          console.error('發生錯誤：', error);
-        });
-    });
+  // 播放/暫停切換的 callback 函數
+  function handlePlayPauseToggle() {
+    setIsPlaying(!isPlaying);
   }
+
+  // 播放/暫停切換的 callback 函數
+  function handleAudioProgressIncress() {
+    var p = audioProgress + 1;
+    p = p > storyLength - 1 ? storyLength - 1 : p;
+    setAudioSrc(
+      buildAudioSrc(
+        storyLang,
+        SpeakerConstant[speaker],
+        storyContent[p].emotion,
+        storyContent[p].sentenceId + 1,
+        isEmoMode
+      )
+    );
+    setaudioProgress(p);
+  }
+  function handleAudioProgressDecress() {
+    var p = audioProgress - 1;
+    p = p < 0 ? 0 : p;
+    setAudioSrc(
+      buildAudioSrc(
+        storyLang,
+        SpeakerConstant[speaker],
+        storyContent[p].emotion,
+        storyContent[p].sentenceId + 1,
+        isEmoMode
+      )
+    );
+    setaudioProgress(p);
+  }
+
+  // 處理音訊播放完成的 callback 函數
+  function handleAudioEnded() {
+    var p = audioProgress + 1;
+    p = p >= storyLength ? storyLength - 1 : p;
+
+    setAudioSrc(
+      buildAudioSrc(
+        storyLang,
+        SpeakerConstant[speaker],
+        storyContent[p] ? storyContent[p].emotion : "",
+        storyContent[p] ? storyContent[p].sentenceId + 1 : storyLength,
+        isEmoMode
+      )
+    );
+
+    setaudioProgress(p);
+  }
+
+  //--------------------- 情緒列表控制
+
+  // 處理更換情緒的 callback 函數
+  function handleSentenceEmotion(emotion: string, sentenceId: number) {
+    setSentenceEmotion(emotion);
+
+    const newContent = storyContent.map((item) =>
+      item.sentenceId === sentenceId ? { ...item, emotion: emotion } : item
+    );
+    setStoryContent(newContent);
+    setLocalStoryContent(JSON.stringify(newContent));
+
+    setAudioSrc(
+      buildAudioSrc(
+        storyLang,
+        SpeakerConstant[speaker],
+        newContent[audioProgress].emotion,
+        audioProgress + 1,
+        true
+      )
+    );
+  }
+
+  // 切換情緒模式的 callback 函數
+  function handleEmotionToggle() {
+    setAudioSrc(
+      buildAudioSrc(
+        storyLang,
+        SpeakerConstant[speaker],
+        sentenceEmotion,
+        audioProgress + 1,
+        !isEmoMode
+      )
+    );
+    setIsEmoMode(!isEmoMode);
+  }
+
+  //--------------------- 語者列表控制
+
+  // 處理更換語者的 callback 函數
+  function handleSpeaker(speakerName: string) {
+    setSpeaker(speakerName);
+
+    setAudioSrc(
+      buildAudioSrc(
+        storyLang,
+        SpeakerConstant[speakerName],
+        sentenceEmotion,
+        audioProgress + 1,
+        true
+      )
+    );
+  }
+
+  //--------------------- 顯示頁面
   return (
     <>
-
-      <main className="flex min-h-screen flex-col justify-center overflow-hidden">
-        <div className='relative h-screen flex justify-center items-center'>
-          <div className="bg-white rounded-lg w-1/2 h-20 flex absolute top-20 left-8">
-            <div className="px-4 py-2 overflow-hidden grid grid-cols-1 grid-rows-[auto,1fr]">
-              <h1 className="text-2xl font-bold mb-4">{params.storyName}</h1>
-            </div>
-            {/* 左上 */}
-          </div>
-          <div className="bg-white rounded-lg w-5/6 h-3/5 mx-auto overflow-y-auto">
-            {/* 中 */}
-            <div className="p-8 mt-10 grid grid-cols-1 gap-y-10">
-              {storyContent.slice(0, 7).map((sentence, index) => (
-                <div key={index} className="text-gray-600">
-                  <p>{typeof sentence === 'string' ? sentence : sentence.sentence}</p>
+      <main className="fixed w-screen flex h-screen flex-col align-middle justify-center overflow-hidden">
+        <div className="flex grow flex-col items-center justify-center m-4">
+          <div className="flex flex-col h-full w-full">
+            <div className="flex h-fit">
+              <div className="bg-white rounded-t-lg w-2/3 p-2">
+                <h1 className="text-lg font-bold truncate">{storyName}</h1>
+              </div>
+              <div className="ml-2 mb-2 w-1/3">
+                <div className="w-full flex justify-center align-middle">
+                  <SpeakerDropdown
+                    speakerList={speakerList}
+                    onSpeakerChange={handleSpeaker}
+                  ></SpeakerDropdown>
                 </div>
-              ))}
+              </div>
             </div>
 
-
-          </div>
-
-          <div className="bg-white rounded-lg w-5/6 h-12 mx-auto absolute bottom-28">
-            <div className="px-4 pt-4 text-center">
-              <h1 className="text-base font-bold mb-4">平靜+激動</h1>
+            <div className="flex grow bg-white h-0">
+              {!loaded ? (
+                <SentenceCarouselLoaded />
+              ) : (
+                <SentenceCarousel
+                  storyContent={storyContent}
+                  snapIndex={audioProgress}
+                  storyLang={storyLang}
+                  isEmoMode={isEmoMode}
+                  onSentenceEmotion={handleSentenceEmotion}
+                ></SentenceCarousel>
+              )}
             </div>
-            {/* 下 */}
-          </div>
-          <div className="absolute top-20 right-8">
-            <select className="border bg-white rounded-lg h-16 px-2 py-1 text-sm">
-              <option value="option1">james.huang</option>
-              <option value="option2">Option 2</option>
-              <option value="option3">Option 3</option>
-            </select>
-            {/* 右上 */}
           </div>
         </div>
-        <div>
-          <Wavbar></Wavbar>
-        </div>
+
+        <Wavbar
+          nowProgress={audioProgress}
+          totalProgress={storyLength}
+          audioSrc={audioSrc}
+          onAudioProgressIncress={handleAudioProgressIncress}
+          onAudioProgressDecress={handleAudioProgressDecress}
+          onPlayPauseToggle={handlePlayPauseToggle}
+          onEmotionToggle={handleEmotionToggle}
+          onAudioEnded={handleAudioEnded}
+        ></Wavbar>
       </main>
-
     </>
   );
 }
